@@ -1,4 +1,5 @@
 ﻿using BepInEx;
+using BepInEx.Configuration;
 using HarmonyLib;
 using UnityEngine;
 using System.Collections;
@@ -6,7 +7,7 @@ using System.Collections.Generic;
 using UnityEngine.UI;
 using TMPro;
 
-[BepInPlugin("denyscrasav4ik.basicallyukrainian.chaos", "Chaos", "1.0.0")]
+[BepInPlugin("denyscrasav4ik.basicallyukrainian.chaos", "Chaos", "1.1.0")]
 public class BasePlugin : BaseUnityPlugin
 {
     public static BasePlugin Instance;
@@ -14,6 +15,16 @@ public class BasePlugin : BaseUnityPlugin
     public static int MaxMonitorWidth;
     public static int MaxMonitorHeight;
     public static int MaxMonitorFPS;
+
+    public static ConfigEntry<int> MinWidth;
+    public static ConfigEntry<int> MinHeight;
+    public static ConfigEntry<int> MaxWidthOverride;
+    public static ConfigEntry<int> MaxHeightOverride;
+
+    public static ConfigEntry<int> MinFPS;
+    public static ConfigEntry<int> MaxFPSOverride;
+
+    public static ConfigEntry<int> FullscreenModeConfig;
 
     void Awake()
     {
@@ -24,19 +35,43 @@ public class BasePlugin : BaseUnityPlugin
         MaxMonitorFPS = Screen.currentResolution.refreshRate;
         if (MaxMonitorFPS <= 0) MaxMonitorFPS = 60;
 
+        MinWidth = Config.Bind("Resolution", "Minimum Width", 10, "Minimum Random Width");
+        MinHeight = Config.Bind("Resolution", "Minimum Height", 10, "Minimum Random Height");
+        MaxWidthOverride = Config.Bind("Resolution", "Maximum Width", 0, "Maximum Random Width (0 = Monitor Width)");
+        MaxHeightOverride = Config.Bind("Resolution", "Maximum Height", 0, "Maximum Random Height (0 = Monitor Height)");
+
+        MinFPS = Config.Bind("FPS", "Minimum FPS", 5, "Minimum Random FPS");
+        MaxFPSOverride = Config.Bind("FPS", "Maximum FPS", 0, "Maximum Random FPS (0 = Monitor FPS)");
+
+        FullscreenModeConfig = Config.Bind("Resolution", "FullscreenMode",
+            0,
+            "Whether the game is fullscreen or not. (0 = Random, 1 = Force Windowed, 2 = Force Fullscreen)");
+
         Harmony harmony = new Harmony("denyscrasav4ik.basicallyukrainian.chaos");
         harmony.PatchAll();
+    }
 
+    public static int GetMaxWidth() => MaxWidthOverride.Value > 0 ? MaxWidthOverride.Value : MaxMonitorWidth;
+    public static int GetMaxHeight() => MaxHeightOverride.Value > 0 ? MaxHeightOverride.Value : MaxMonitorHeight;
+    public static int GetMaxFPS() => MaxFPSOverride.Value > 0 ? MaxFPSOverride.Value : MaxMonitorFPS;
+
+    public static bool GetFullscreenValue()
+    {
+        switch (FullscreenModeConfig.Value)
+        {
+            case 1: return false;
+            case 2: return true;
+            default: return Random.value > 0.5f;
+        }
     }
 
     public IEnumerator ChangeSampleRate(int rate)
     {
         AudioSource[] allSources = Object.FindObjectsOfType<AudioSource>();
         List<AudioSource> playingSources = new List<AudioSource>();
+
         foreach (AudioSource source in allSources)
-        {
-            if (source.isPlaying) { playingSources.Add(source); }
-        }
+            if (source.isPlaying) playingSources.Add(source);
 
         yield return new WaitForEndOfFrame();
 
@@ -46,9 +81,7 @@ public class BasePlugin : BaseUnityPlugin
         AudioSettings.Reset(configuration);
 
         foreach (AudioSource source in playingSources)
-        {
-            if (source != null) { try { source.Play(); } catch { } }
-        }
+            if (source != null) try { source.Play(); } catch { }
     }
 }
 
@@ -62,19 +95,20 @@ public static class ChaosController
         if (Time.unscaledTime - lastTriggerTime < Cooldown) return;
         lastTriggerTime = Time.unscaledTime;
 
-        int width = Random.Range(10, BasePlugin.MaxMonitorWidth + 1);
-        int height = Random.Range(10, BasePlugin.MaxMonitorHeight + 1);
-        Screen.SetResolution(width, height, false);
+        int width = Random.Range(BasePlugin.MinWidth.Value, BasePlugin.GetMaxWidth() + 1);
+        int height = Random.Range(BasePlugin.MinHeight.Value, BasePlugin.GetMaxHeight() + 1);
+        bool fullscreen = BasePlugin.GetFullscreenValue();
+
+        Screen.SetResolution(width, height, fullscreen);
 
         QualitySettings.vSyncCount = 0;
-        Application.targetFrameRate = Random.Range(5, BasePlugin.MaxMonitorFPS + 1);
+        Application.targetFrameRate = Random.Range(BasePlugin.MinFPS.Value, BasePlugin.GetMaxFPS() + 1);
 
         int[] rateOptions = { 8000, 11025, 16000, 22050, 44100, 48000, 96000 };
-        int targetRate = rateOptions[Random.Range(0, rateOptions.Length + 1)];
+        int targetRate = rateOptions[Random.Range(0, rateOptions.Length)];
         BasePlugin.Instance.StartCoroutine(BasePlugin.Instance.ChangeSampleRate(targetRate));
     }
 }
-
 
 [HarmonyPatch(typeof(CoreGameManager))]
 public class CoreManagerPatches
@@ -153,16 +187,19 @@ public class HudManagerPatch
     private static TMP_Text fpsDisplay;
     private static TMP_Text resDisplay;
     private static TMP_Text audioDisplay;
+    private static CanvasScaler scaler;
 
     [HarmonyPatch("Awake")]
     [HarmonyPostfix]
-    static void PostfixAwake(HudManager __instance, GameObject[] ___notebookDisplay)
+    static void PostfixAwake(HudManager __instance, GameObject[] ___notebookDisplay, CanvasScaler ___canvasScaler)
     {
+        scaler = ___canvasScaler;
+
         Transform parent = ___notebookDisplay[0].transform.parent;
 
-        fpsDisplay = CreateText(parent, "Max FPS: ", new Vector2(10, -60));
-        resDisplay = CreateText(parent, "Screen Resolution: ", new Vector2(10, -100));
-        audioDisplay = CreateText(parent, "Audio Bitrate: ", new Vector2(10, -140));
+        fpsDisplay = CreateText(parent, "Max FPS: ", new Vector2(10, -50));
+        resDisplay = CreateText(parent, "Screen Resolution: ", new Vector2(10, -80));
+        audioDisplay = CreateText(parent, "Audio Bitrate: ", new Vector2(10, -110));
     }
 
     [HarmonyPatch("Update")]
@@ -173,7 +210,7 @@ public class HudManagerPatch
         {
             int fps = Application.targetFrameRate;
             fpsDisplay.text = $"Max FPS: {(fps > 0 ? fps.ToString() : "Unlimited")}";
-            resDisplay.text = $"Screen Resolution: {Screen.width}x{Screen.height}";
+            resDisplay.text = $"Screen Resolution: {Screen.width}x{Screen.height} ({(Screen.fullScreen ? "Fullscreen" : "Windowed")})";
             audioDisplay.text = $"Audio Bitrate: {AudioSettings.outputSampleRate}Hz";
         }
     }
