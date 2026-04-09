@@ -1,4 +1,4 @@
-# Baldi's Basics Plus Chaos
+# Baldi's Basics Plus + Classic Remastered Chaos
 
 ## 📝 Functionality
 
